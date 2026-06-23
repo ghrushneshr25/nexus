@@ -5,79 +5,85 @@ import (
 	"sync"
 )
 
-// serviceKey uniquely identifies a Nexus service declaration.
+// serviceKey uniquely identifies one resolvable Nexus singleton.
 //
-// A default service uses an empty name. Named services will use a non-empty
-// name later, so the field is included now to keep the internal key stable.
-//
-// Example default key:
-//
-//	MessagingClient + ""
+// Default services use an empty name and memberID zero.
+// Named services use a non-empty name and memberID zero.
+// Group members use a non-empty group and a unique non-zero memberID.
 type serviceKey struct {
 	contract reflect.Type
 	name     string
+	group    string
+	memberID uint64
 }
 
 // declaration stores normalized constructor metadata.
 //
-// Nexus parses constructors during Declare rather than during resolution.
-// This keeps resolution focused on dependency lookup and constructor execution.
-//
-// Constructors are never invoked while creating a declaration.
+// Constructors are parsed during declaration and invoked only during
+// resolution.
 type declaration struct {
-	// key identifies the service returned by this constructor.
 	key serviceKey
 
-	// constructor is the reflected user-provided constructor function.
 	constructor reflect.Value
 
-	// dependencies preserves constructor parameter types in declaration order.
-	// They will be resolved and passed to constructor in the same order later.
 	dependencies []reflect.Type
 
-	// returnsError reports whether the constructor has this form:
-	//
-	//	func(...) (Service, error)
 	returnsError bool
+}
+
+// groupKey identifies all members registered for one interface contract and
+// group name.
+type groupKey struct {
+	contract reflect.Type
+	group    string
+}
+
+// groupMember represents one ordered constructor registration in a group.
+//
+// Its declaration key has a unique memberID, allowing multiple constructors
+// for the same interface to have independent singleton instances.
+type groupMember struct {
+	declaration declaration
 }
 
 // buildState represents one in-progress singleton construction.
 //
-// Callers that arrive while a service is being constructed wait for done to be
-// closed, then retry resolution. The constructing goroutine closes done after
-// it either caches a successful instance or finishes with an error.
+// Callers arriving while construction is in progress wait for done to close,
+// then retry resolution.
 type buildState struct {
 	done chan struct{}
 }
 
-// registry owns the process-wide Nexus declaration state.
-//
-// Nexus uses one global registry because services are intended to be declared
-// from package init() functions. All access to declarations must hold mu.
-//
-// At this stage, declarations contain metadata only. No singleton instances
-// are stored and no constructors are executed.
+// registry owns the package-wide Nexus declaration and resolution state.
 type registry struct {
 	mu sync.RWMutex
 
-	// declarations maps each service key to exactly one constructor declaration.
-	//
-	// A duplicate default declaration for the same interface must be rejected.
+	// declarations contains default and named service declarations.
 	declarations map[serviceKey]declaration
-	values       map[reflect.Type]reflect.Value
-	instances    map[serviceKey]reflect.Value
 
-	// building tracks services currently being constructed.
+	// groups contains ordered multi-binding registrations.
 	//
-	// It prevents multiple goroutines from invoking the same constructor
-	// concurrently. Failed builds are not retained after completion.
+	// The slice order is declaration order and is preserved by GetGroup.
+	groups map[groupKey][]groupMember
+
+	// nextGroupMemberID creates unique service keys for group members.
+	nextGroupMemberID uint64
+
+	// values stores concrete constructor dependencies by exact type.
+	values map[reflect.Type]reflect.Value
+
+	// instances stores successfully constructed singleton services, including
+	// default, named, and group-member services.
+	instances map[serviceKey]reflect.Value
+
+	// building prevents duplicate concurrent construction of one service key.
 	building map[serviceKey]*buildState
 }
 
 // globalRegistry is the package-wide registry used by the public Nexus API.
-// It must be initialized before any importing package init() function runs.
 var globalRegistry = registry{
 	declarations: make(map[serviceKey]declaration),
+	groups:       make(map[groupKey][]groupMember),
 	values:       make(map[reflect.Type]reflect.Value),
 	instances:    make(map[serviceKey]reflect.Value),
 	building:     make(map[serviceKey]*buildState),
@@ -85,8 +91,7 @@ var globalRegistry = registry{
 
 // resolveContext tracks the active dependency chain for one resolution call.
 //
-// It is not shared between goroutines. It exists only to detect cycles such
-// as ServiceA -> ServiceB -> ServiceA before the resolver waits on itself.
+// It is not shared between goroutines.
 type resolveContext struct {
 	path map[serviceKey]struct{}
 }

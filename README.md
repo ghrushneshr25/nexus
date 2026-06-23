@@ -220,3 +220,128 @@ Validate detects:
 - direct and indirect circular dependencies.
 
 Validation is structural only. It does not invoke constructors, connect to external systems, or guarantee that a constructor cannot return an error.
+
+## Groups and multi-binding
+
+Groups allow multiple implementations of the same interface to be registered and resolved together. They are useful for ordered middleware chains, plugins, event handlers, validators, exporters, and hooks.
+
+Group members are resolved explicitly. They are not selected automatically when Nexus injects an interface dependency into a constructor.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/ghrushneshr25/nexus"
+)
+
+type Event struct {
+	Type string
+	ID   string
+}
+
+type EventHandler interface {
+	Handle(ctx context.Context, event Event) error
+}
+
+type auditHandler struct{}
+
+func (auditHandler) Handle(ctx context.Context, event Event) error {
+	fmt.Printf("audit event: %s %s\n", event.Type, event.ID)
+
+	return nil
+}
+
+type metricsHandler struct{}
+
+func (metricsHandler) Handle(ctx context.Context, event Event) error {
+	fmt.Printf("recording metric for event: %s\n", event.Type)
+
+	return nil
+}
+
+type webhookHandler struct{}
+
+func (webhookHandler) Handle(ctx context.Context, event Event) error {
+	fmt.Printf("sending webhook for event: %s\n", event.ID)
+
+	return nil
+}
+
+func NewAuditHandler() EventHandler {
+	return auditHandler{}
+}
+
+func NewMetricsHandler() EventHandler {
+	return metricsHandler{}
+}
+
+func NewWebhookHandler() EventHandler {
+	return webhookHandler{}
+}
+
+func init() {
+	nexus.MustDeclareGroup("event-handlers", NewAuditHandler)
+	nexus.MustDeclareGroup("event-handlers", NewMetricsHandler)
+	nexus.MustDeclareGroup("event-handlers", NewWebhookHandler)
+}
+
+func main() {
+	handlers := nexus.MustGetGroup[EventHandler]("event-handlers")
+
+	event := Event{
+		Type: "order.created",
+		ID:   "order-42",
+	}
+
+	for _, handler := range handlers {
+		if err := handler.Handle(context.Background(), event); err != nil {
+			panic(err)
+		}
+	}
+}
+```
+
+Group members are returned in the same order they were declared:
+
+```text
+AuditHandler
+MetricsHandler
+WebhookHandler
+```
+
+Each group member is created lazily and cached independently as a singleton. Repeated calls to `GetGroup` or `MustGetGroup` return the same member instances.
+
+```go
+first := nexus.MustGetGroup[EventHandler]("event-handlers")
+second := nexus.MustGetGroup[EventHandler]("event-handlers")
+
+// first[0] and second[0] refer to the same AuditHandler singleton.
+```
+
+### Group rules
+
+| Rule                     | Behavior                                                                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Group name               | Must be non-empty.                                                                                                                    |
+| Ordering                 | Members are returned in declaration order.                                                                                            |
+| Multiple implementations | Multiple constructors returning the same interface may be registered in one group.                                                    |
+| Duplicate constructor    | The same constructor cannot be registered twice for the same interface and group.                                                     |
+| Default injection        | Group members are never injected automatically. Constructor interface dependencies always resolve the default `Declare` registration. |
+| Named services           | Groups are separate from named services. Use `GetNamed` when selecting one implementation by name.                                    |
+| Dependencies             | Group constructors support normal constructor injection and declared concrete values.                                                 |
+| Lifecycle                | Each group member is a lazy singleton and is constructed at most once concurrently.                                                   |
+
+Use named services when selecting one implementation explicitly:
+
+```go
+client := nexus.MustGetNamed(OrdersClientContract)
+```
+
+Use groups when executing every registered implementation:
+
+```go
+handlers := nexus.MustGetGroup[EventHandler]("event-handlers")
+```

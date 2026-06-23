@@ -14,4 +14,6 @@ func Reset() {
 	globalRegistry.values = make(map[reflect.Type]reflect.Value)
 	globalRegistry.instances = make(map[serviceKey]reflect.Value)
 	globalRegistry.building = make(map[serviceKey]*buildState)
+	globalRegistry.groups = make(map[groupKey][]groupMember)
+	globalRegistry.nextGroupMemberID = 0
 }

@@ -18,17 +18,24 @@ const (
 // Validate checks whether all registered service declarations have resolvable
 // dependencies without invoking constructors.
 //
-// It validates default and named declarations, detects missing default service
-// declarations and missing concrete values, and detects direct or indirect
-// circular dependencies. Validate does not create singleton instances.
+// It validates default services, named services, and group members. It detects
+// missing default service declarations, missing concrete values, and direct or
+// indirect circular dependencies. Validate does not create singleton instances.
 func Validate() error {
 	globalRegistry.mu.RLock()
 
-	// Copy registry metadata so validation does not hold the registry lock
-	// during graph traversal.
+	// Copy all ordinary declarations first.
 	declarations := make(map[serviceKey]declaration, len(globalRegistry.declarations))
-
 	maps.Copy(declarations, globalRegistry.declarations)
+
+	// Flatten group-member declarations into the same lookup map. Each group
+	// member has a unique serviceKey through memberID, so members remain
+	// independently traversable and independently cycle-safe.
+	for _, members := range globalRegistry.groups {
+		for _, member := range members {
+			declarations[member.declaration.key] = member.declaration
+		}
+	}
 
 	// Validation only needs to know whether a concrete value type exists.
 	values := make(map[reflect.Type]struct{}, len(globalRegistry.values))
@@ -50,12 +57,10 @@ func Validate() error {
 }
 
 // validateDeclaration recursively validates one service and its dependencies.
-func validateDeclaration(key serviceKey, declarations map[serviceKey]declaration, values map[reflect.Type]struct{}, states map[serviceKey]validationState,
-) error {
+func validateDeclaration(key serviceKey, declarations map[serviceKey]declaration, values map[reflect.Type]struct{}, states map[serviceKey]validationState) error {
 	switch states[key] {
 	case validationVisited:
 		return nil
-
 	case validationVisiting:
 		return fmt.Errorf("%w: %s", ErrCircularDependency, serviceKeyString(key))
 	}
@@ -67,8 +72,7 @@ func validateDeclaration(key serviceKey, declarations map[serviceKey]declaration
 
 	states[key] = validationVisiting
 
-	// If dependency validation fails, restore this node to unvisited so the
-	// state map remains internally consistent for the current traversal.
+	// Restore an incomplete traversal if a dependency fails validation.
 	defer func() {
 		if states[key] == validationVisiting {
 			states[key] = validationUnvisited
@@ -77,11 +81,11 @@ func validateDeclaration(key serviceKey, declarations map[serviceKey]declaration
 
 	for _, dependencyType := range declared.dependencies {
 		// Interface dependencies always resolve through the default service
-		// declaration, even when the current service itself is named.
+		// declaration. Named services and group members are never injected
+		// automatically.
 		if dependencyType.Kind() == reflect.Interface {
 			dependencyKey := serviceKey{
 				contract: dependencyType,
-				name:     "",
 			}
 
 			if err := validateDeclaration(dependencyKey, declarations, values, states); err != nil {

@@ -224,9 +224,7 @@ func TestValidateReturnsMissingInterfaceDependencyError(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
 
-	if err := Declare(func(
-		dependency validateMissingDependency,
-	) validateMissingConsumer {
+	if err := Declare(func(dependency validateMissingDependency) validateMissingConsumer {
 		return validateMissingConsumerImpl{
 			dependency: dependency,
 		}
@@ -249,9 +247,7 @@ func TestValidateReturnsMissingConcreteValueError(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
 
-	if err := Declare(func(
-		config validateConfig,
-	) validateConfigService {
+	if err := Declare(func(config validateConfig) validateConfigService {
 		return validateConfigServiceImpl{
 			config: config,
 		}
@@ -270,9 +266,7 @@ func TestValidateDetectsDirectCircularDependency(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
 
-	if err := Declare(func(
-		dependency validateDirectCycleB,
-	) validateDirectCycleA {
+	if err := Declare(func(dependency validateDirectCycleB) validateDirectCycleA {
 		return validateDirectCycleAImpl{
 			dependency: dependency,
 		}
@@ -280,9 +274,7 @@ func TestValidateDetectsDirectCircularDependency(t *testing.T) {
 		t.Fatalf("Declare(A) error = %v", err)
 	}
 
-	if err := Declare(func(
-		dependency validateDirectCycleA,
-	) validateDirectCycleB {
+	if err := Declare(func(dependency validateDirectCycleA) validateDirectCycleB {
 		return validateDirectCycleBImpl{
 			dependency: dependency,
 		}
@@ -301,9 +293,7 @@ func TestValidateDetectsIndirectCircularDependency(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
 
-	if err := Declare(func(
-		dependency validateIndirectCycleB,
-	) validateIndirectCycleA {
+	if err := Declare(func(dependency validateIndirectCycleB) validateIndirectCycleA {
 		return validateIndirectCycleAImpl{
 			dependency: dependency,
 		}
@@ -311,9 +301,7 @@ func TestValidateDetectsIndirectCircularDependency(t *testing.T) {
 		t.Fatalf("Declare(A) error = %v", err)
 	}
 
-	if err := Declare(func(
-		dependency validateIndirectCycleC,
-	) validateIndirectCycleB {
+	if err := Declare(func(dependency validateIndirectCycleC) validateIndirectCycleB {
 		return validateIndirectCycleBImpl{
 			dependency: dependency,
 		}
@@ -321,9 +309,7 @@ func TestValidateDetectsIndirectCircularDependency(t *testing.T) {
 		t.Fatalf("Declare(B) error = %v", err)
 	}
 
-	if err := Declare(func(
-		dependency validateIndirectCycleA,
-	) validateIndirectCycleC {
+	if err := Declare(func(dependency validateIndirectCycleA) validateIndirectCycleC {
 		return validateIndirectCycleCImpl{
 			dependency: dependency,
 		}
@@ -346,7 +332,6 @@ func TestValidateDoesNotInvokeConstructors(t *testing.T) {
 
 	if err := Declare(func() validateUserService {
 		calls.Add(1)
-
 		return validateUserServiceImpl{}
 	}); err != nil {
 		t.Fatalf("Declare() error = %v", err)
@@ -380,10 +365,7 @@ func TestValidateDoesNotCreateSingletonInstances(t *testing.T) {
 	globalRegistry.mu.RUnlock()
 
 	if instanceCount != 0 {
-		t.Fatalf(
-			"singleton instance count = %d, want 0",
-			instanceCount,
-		)
+		t.Fatalf("singleton instance count = %d, want 0", instanceCount)
 	}
 }
 
@@ -391,9 +373,7 @@ func TestValidateNamedServiceRequiresDefaultInterfaceDependency(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
 
-	if err := DeclareNamed("orders", func(
-		dependency validateNamedDependency,
-	) validateNamedConsumer {
+	if err := DeclareNamed("orders", func(dependency validateNamedDependency) validateNamedConsumer {
 		return validateNamedConsumerImpl{
 			dependency: dependency,
 		}
@@ -409,5 +389,154 @@ func TestValidateNamedServiceRequiresDefaultInterfaceDependency(t *testing.T) {
 
 	if !errors.Is(err, ErrServiceNotDeclared) {
 		t.Fatalf("expected ErrServiceNotDeclared, got %v", err)
+	}
+}
+
+func TestValidateAcceptsResolvableGroupMembers(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	if err := Declare(func() validateRepository {
+		return validateRepositoryImpl{}
+	}); err != nil {
+		t.Fatalf("Declare(repository) error = %v", err)
+	}
+
+	if err := DeclareGroup("handlers", func(repository validateRepository) validateUserService {
+		return validateUserServiceImpl{
+			repository: repository,
+		}
+	}); err != nil {
+		t.Fatalf("DeclareGroup() error = %v", err)
+	}
+
+	if err := Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateFailsForMissingGroupMemberServiceDependency(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	if err := DeclareGroup("handlers", func(dependency validateMissingDependency) validateUserService {
+		return validateUserServiceImpl{}
+	}); err != nil {
+		t.Fatalf("DeclareGroup() error = %v", err)
+	}
+
+	err := Validate()
+
+	if !errors.Is(err, ErrDependencyNotDeclared) {
+		t.Fatalf("expected ErrDependencyNotDeclared, got %v", err)
+	}
+
+	if !errors.Is(err, ErrServiceNotDeclared) {
+		t.Fatalf("expected ErrServiceNotDeclared, got %v", err)
+	}
+}
+
+func TestValidateFailsForMissingGroupMemberValueDependency(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	if err := DeclareGroup("handlers", func(config validateConfig) validateConfigService {
+		return validateConfigServiceImpl{
+			config: config,
+		}
+	}); err != nil {
+		t.Fatalf("DeclareGroup() error = %v", err)
+	}
+
+	err := Validate()
+
+	if !errors.Is(err, ErrDependencyNotDeclared) {
+		t.Fatalf("expected ErrDependencyNotDeclared, got %v", err)
+	}
+}
+
+func TestValidateDetectsCycleReachableFromGroupMember(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	if err := Declare(func(dependency validateDirectCycleB) validateDirectCycleA {
+		return validateDirectCycleAImpl{
+			dependency: dependency,
+		}
+	}); err != nil {
+		t.Fatalf("Declare(A) error = %v", err)
+	}
+
+	if err := Declare(func(dependency validateDirectCycleA) validateDirectCycleB {
+		return validateDirectCycleBImpl{
+			dependency: dependency,
+		}
+	}); err != nil {
+		t.Fatalf("Declare(B) error = %v", err)
+	}
+
+	if err := DeclareGroup("handlers", func(dependency validateDirectCycleA) validateUserService {
+		return validateUserServiceImpl{}
+	}); err != nil {
+		t.Fatalf("DeclareGroup() error = %v", err)
+	}
+
+	err := Validate()
+
+	if !errors.Is(err, ErrCircularDependency) {
+		t.Fatalf("expected ErrCircularDependency, got %v", err)
+	}
+}
+
+func TestValidateDoesNotInvokeGroupConstructors(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	var calls atomic.Int32
+
+	if err := DeclareGroup("handlers", func() validateUserService {
+		calls.Add(1)
+		return validateUserServiceImpl{}
+	}); err != nil {
+		t.Fatalf("DeclareGroup() error = %v", err)
+	}
+
+	if err := Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("group constructor calls = %d, want 0", got)
+	}
+}
+
+func TestValidateAcceptsMultipleResolvableGroupMembers(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	if err := Declare(func() validateRepository {
+		return validateRepositoryImpl{}
+	}); err != nil {
+		t.Fatalf("Declare(repository) error = %v", err)
+	}
+
+	if err := DeclareGroup("handlers", func(repository validateRepository) validateUserService {
+		return validateUserServiceImpl{
+			repository: repository,
+		}
+	}); err != nil {
+		t.Fatalf("first DeclareGroup() error = %v", err)
+	}
+
+	if err := DeclareGroup("handlers", func(repository validateRepository) validateUserService {
+		return validateUserServiceImpl{
+			repository: repository,
+		}
+	}); err != nil {
+		t.Fatalf("second DeclareGroup() error = %v", err)
+	}
+
+	if err := Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }

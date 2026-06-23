@@ -184,9 +184,69 @@ func parseConstructor(constructor any) (declaration, error) {
 //
 //	package.MessagingClient["orders"]
 func serviceKeyString(key serviceKey) string {
-	if key.name == "" {
-		return key.contract.String()
+	base := key.contract.String()
+
+	if key.name != "" {
+		return fmt.Sprintf("%s[%q]", base, key.name)
 	}
 
-	return fmt.Sprintf("%s[%q]", key.contract, key.name)
+	if key.group != "" {
+		return fmt.Sprintf("%s group %q", base, key.group)
+	}
+
+	return base
+}
+
+// DeclareGroup registers constructor as an ordered member of group.
+//
+// Multiple constructors may be registered for the same interface and group.
+// Group members are resolved explicitly through GetGroup or MustGetGroup;
+// they are never selected automatically for ordinary constructor injection.
+//
+// A group name must be non-empty. Group members preserve declaration order.
+func DeclareGroup(group string, constructor any) error {
+	if group == "" {
+		return ErrInvalidGroupName
+	}
+
+	parsed, err := parseConstructor(constructor)
+	if err != nil {
+		return err
+	}
+
+	globalRegistry.mu.Lock()
+	defer globalRegistry.mu.Unlock()
+
+	key := groupKey{
+		contract: parsed.key.contract,
+		group:    group,
+	}
+
+	globalRegistry.nextGroupMemberID++
+
+	parsed.key = serviceKey{
+		contract: parsed.key.contract,
+		group:    group,
+		memberID: globalRegistry.nextGroupMemberID,
+	}
+
+	globalRegistry.groups[key] = append(
+		globalRegistry.groups[key],
+		groupMember{
+			declaration: parsed,
+		},
+	)
+
+	return nil
+}
+
+// MustDeclareGroup registers constructor as a member of group and panics if
+// registration fails.
+//
+// It is intended for application wiring where invalid registration should
+// fail fast.
+func MustDeclareGroup(group string, constructor any) {
+	if err := DeclareGroup(group, constructor); err != nil {
+		panic(err)
+	}
 }

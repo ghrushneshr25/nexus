@@ -82,4 +82,10 @@ var (
 	ErrNamedContractRequiresGetNamed = errors.New(
 		"nexus: named contract requires GetNamed",
 	)
+
+	ErrInvalidGroupName = errors.New("nexus: group name must not be empty")
+
+	ErrDuplicateGroupDeclaration = errors.New(
+		"nexus: duplicate group service declaration",
+	)
 )
