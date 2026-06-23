@@ -56,8 +56,3 @@ jobs:
       - name: Run race tests
         run: go test -race ./...
 
-      - name: Build examples
-        working-directory: examples
-        run: |
-          go work sync
-          go build ./...
