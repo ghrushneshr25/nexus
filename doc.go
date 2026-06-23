@@ -45,4 +45,8 @@
 // Concurrent resolution of the same service constructs it at most once.
 // Nexus also detects direct and indirect circular dependencies during
 // resolution.
+
+// Validate checks the registered dependency graph without invoking
+// constructors. It detects missing default service declarations, missing
+// concrete values, and direct or indirect circular dependencies.
 package nexus

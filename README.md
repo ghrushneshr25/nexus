@@ -198,3 +198,25 @@ orders := nexus.MustGetNamed(OrdersClientContract)
 - Concurrent requests for the same service construct it at most once.
 - Direct and indirect circular dependencies return an error.
 - `Reset` clears registered declarations, values, cached instances, and in-progress build state. It is intended for tests.
+
+### Validate dependency wiring
+
+Call `Validate` after all registrations are complete and before starting the application. Validation checks the dependency graph without invoking constructors or creating singleton instances.
+
+```go
+func main() {
+	if err := nexus.Validate(); err != nil {
+		log.Fatal(err)
+	}
+
+	server := nexus.MustGet(ServerContract)
+	server.Run()
+}
+```
+
+Validate detects:
+- missing default service declarations for interface dependencies;
+- missing values for concrete constructor dependencies;
+- direct and indirect circular dependencies.
+
+Validation is structural only. It does not invoke constructors, connect to external systems, or guarantee that a constructor cannot return an error.
